@@ -7,7 +7,7 @@ import os
 import torch.optim as optim
 
 
-def get_data_loader(batch_size, num_workers, data_path):
+def get_data_loader(batch_size, num_workers, data_path, download=False):
     transforms_train = transforms.Compose(
         [
             transforms.RandomCrop(32, padding=4),
@@ -26,10 +26,10 @@ def get_data_loader(batch_size, num_workers, data_path):
     )
 
     train_dataset = datasets.CIFAR100(
-        data_path, train=True, download=False, transform=transforms_train
+        data_path, train=True, download=download, transform=transforms_train
     )
     test_dataset = datasets.CIFAR100(
-        root=data_path, train=False, download=False, transform=transforms_test
+        root=data_path, train=False, download=download, transform=transforms_test
     )
 
     train_loader = torch.utils.data.DataLoader(
