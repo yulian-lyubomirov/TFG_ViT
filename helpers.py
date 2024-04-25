@@ -10,8 +10,7 @@ import torch.optim as optim
 def get_data_loader(batch_size, num_workers, data_path, download=False):
     transforms_train = transforms.Compose(
         [
-            transforms.RandomCrop(32, padding=4),
-            # transforms.Resize(224),
+            transforms.Resize(32),
             transforms.RandomHorizontalFlip(),
             transforms.ToTensor(),
             transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
@@ -19,7 +18,7 @@ def get_data_loader(batch_size, num_workers, data_path, download=False):
     )
     transforms_test = transforms.Compose(
         [
-            # transforms.Resize(224),
+            transforms.Resize(32),
             transforms.ToTensor(),
             transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
         ]
@@ -189,3 +188,16 @@ def build_optimizer(model, learning_rate):
     # Instantiate the optimizer
     optimizer = optim.Adam(parameters, lr=learning_rate)
     return optimizer
+
+def compute_pruning_ammount(epoch):
+
+    if epoch == 50:
+        return 0.1
+
+    elif epoch == 80:
+        return 0.15
+
+    elif 95 < epoch < 99:
+        return 0.01
+    
+    return 0
