@@ -191,13 +191,15 @@ def build_optimizer(model, learning_rate):
 
 def compute_pruning_ammount(epoch):
 
-    if epoch == 30:
-        return 0.3
-
-    elif epoch == 50:
+    if epoch == 50:
         return 0.15
 
-    elif 95 < epoch < 99:
-        return 0.01
+    # elif epoch == 50:
+    #     return 0.15
+
+    # elif 95 < epoch < 99:
+    #     return 0.01
+    elif epoch == 100:
+        return 0.3
     
     return 0
