@@ -28,7 +28,7 @@ def train(
         checkpoint = load_checkpoint(model, load_path)
     criterion = nn.CrossEntropyLoss()
     # optimizer = build_optimizer(model,learning_rate)
-    optimizer = optim.Adam(model.parameters(), lr=learning_rate,weight_decay=0.001)
+    optimizer = optim.Adam(model.parameters(), lr=learning_rate,weight_decay=0.00005)
     lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, epochs)
     scaler = torch.cuda.amp.GradScaler(enabled=True)
     # lr_scheduler = torch.optim.lr_scheduler.LinearLR(optimizer, start_factor=1.0, end_factor=0.01, total_iters=200)
@@ -125,7 +125,7 @@ def train_kd(
         load_checkpoint(teacher, load_path_teacher)
     criterion = nn.CrossEntropyLoss()
     # optimizer = build_optimizer(model,learning_rate)
-    optimizer = optim.Adam(student.parameters(), lr=learning_rate,weight_decay=0.0001)
+    optimizer = optim.Adam(student.parameters(), lr=learning_rate,weight_decay=0.00005)
     lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, epochs)
     scaler = torch.cuda.amp.GradScaler(enabled=True)
     # lr_scheduler = torch.optim.lr_scheduler.LinearLR(optimizer, start_factor=1.0, end_factor=0.01, total_iters=200)
@@ -217,14 +217,13 @@ def train_kd_pruning(
         load_checkpoint(teacher, load_path_teacher)
     criterion = nn.CrossEntropyLoss()
     # optimizer = build_optimizer(model,learning_rate)
-    optimizer = optim.Adam(student.parameters(), lr=learning_rate,weight_decay=0.0001)
+    optimizer = optim.Adam(student.parameters(), lr=learning_rate,weight_decay=0.00005)
     lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, epochs)
     scaler = torch.cuda.amp.GradScaler(enabled=True)
 
-    if pruning_method=='unstructured':
-        # make weights sparse tensors
-        for param in student.parameters():
-                param= nn.Parameter(torch.sparse.FloatTensor(param.shape).to('cuda'))
+    # make weights sparse tensors
+    for param in student.parameters():
+            param= nn.Parameter(torch.sparse.FloatTensor(param.shape).to('cuda'))
     max_test_accuracy = 0
     teacher.eval()
     student.train()
@@ -319,10 +318,9 @@ def train_pruning(
     lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, epochs)
     scaler = torch.cuda.amp.GradScaler(enabled=True)
 
-    if pruning_method=='unstructured':
-        # make weights sparse tensors
-        for param in model.parameters():
-                param= nn.Parameter(torch.sparse.FloatTensor(param.shape).to('cuda'))
+    # make weights sparse tensors
+    for param in model.parameters():
+            param= nn.Parameter(torch.sparse.FloatTensor(param.shape).to('cuda'))
 
     model.train()
     max_test_accuracy = 0
@@ -373,7 +371,7 @@ def train_pruning(
                     if pruning_method == 'structured':
                         prune.ln_structured(module, name='weight', amount=pruning_amount, n=2, dim=0)
                     elif pruning_method == 'unstructured':
-                        prune.ln_unstructured(module, name='weight', amount=pruning_amount, n=1, dim=0)
+                        prune.ln_unstructured(module, name='weight', amount=pruning_amount, n=2, dim=0)
 
 
     save_lists_path = f"{save_path}/loss_and_accuracy"
