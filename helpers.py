@@ -42,11 +42,11 @@ def get_data_loader(batch_size, num_workers, data_path, download=False):
 
 def load_checkpoint(model, path):
     state_dict = torch.load(path, map_location="cpu")["model"]
-
-    own_state_dict = model.state_dict()
-    for name, param in state_dict.items():
-        if name in own_state_dict and "head" not in name:
-            own_state_dict[name].copy_(param)
+    model.load_state_dict(state_dict)
+    # own_state_dict = model.state_dict()
+    # for param,name in state_dict.items():
+    #     if name in own_state_dict and "head" not in name:
+    #         own_state_dict[name].copy_(param)
 
     torch.cuda.empty_cache()
     # return max_accuracy
@@ -191,10 +191,10 @@ def build_optimizer(model, learning_rate):
 
 def compute_pruning_ammount(epoch):
 
-    if epoch == 50:
-        return 0.1
+    if epoch == 30:
+        return 0.3
 
-    elif epoch == 80:
+    elif epoch == 50:
         return 0.15
 
     elif 95 < epoch < 99:
