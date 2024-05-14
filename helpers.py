@@ -5,76 +5,62 @@ import numpy as np
 import matplotlib.pyplot as plt
 import os
 import torch.optim as optim
+import sys
+from sklearn.cluster import KMeans
+import torch
+import torch.quantization as quantization
+import cv2
 
 
-def get_data_loader(batch_size, num_workers, data_path, download=False):
-    transforms_train = transforms.Compose(
-        [
-            transforms.Resize(32),
-            transforms.RandomHorizontalFlip(),
-            transforms.ToTensor(),
-            transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
-        ]
-    )
-    transforms_test = transforms.Compose(
-        [
-            transforms.Resize(32),
-            transforms.ToTensor(),
-            transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
-        ]
-    )
+def compute_pruning_ammount(epoch):
+    # if epoch == 50:
+    #     return 0.15
 
-    train_dataset = datasets.CIFAR100(
-        data_path, train=True, download=download, transform=transforms_train
-    )
-    test_dataset = datasets.CIFAR100(
-        root=data_path, train=False, download=download, transform=transforms_test
-    )
+    # elif epoch == 50:
+    #     return 0.15
 
-    train_loader = torch.utils.data.DataLoader(
-        train_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers
-    )
-    test_loader = torch.utils.data.DataLoader(
-        test_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers
-    )
-    return train_loader, test_loader
+    # elif 95 < epoch < 99:
+    #     return 0.01
+    if epoch == 30:
+        return 0.95
+
+    return 0
 
 
-def load_checkpoint(model, path):
-    state_dict = torch.load(path, map_location="cpu")["model"]
-    model.load_state_dict(state_dict)
-    # own_state_dict = model.state_dict()
-    # for param,name in state_dict.items():
-    #     if name in own_state_dict and "head" not in name:
-    #         own_state_dict[name].copy_(param)
+def quantize_model(model, test_loader, device, save_path=None):
+    # Convert the model to evaluation mode
+    model.eval()
+    model.to("cpu")
+    # Apply quantization to the model
+    model = quantization.QuantWrapper(model)
+    model.qconfig = quantization.get_default_qconfig("fbgemm", 0)  # Specify version 0
+    quantization.prepare(model, inplace=True)
+    quantization.convert(model, inplace=True)
+    model.to(device)
+    # Evaluate the quantized model
+    correct = 0
+    total = 0
+    with torch.no_grad():
+        for inputs, labels in test_loader:
+            inputs, labels = inputs.to(device), labels.to(device)
+            outputs = model(inputs)
+            _, predicted = torch.max(outputs, 1)
+            total += labels.size(0)
+            correct += (predicted == labels).sum().item()
 
-    torch.cuda.empty_cache()
-    # return max_accuracy
+    accuracy = 100.0 * correct / total
+    print(f"Test Accuracy: {accuracy:.2f}%")
+
+    # Save the quantized model if a path is provided
+    if save_path:
+        torch.save(model.state_dict(), save_path)
+
+    return model
 
 
-def save_checkpoint(epoch, model, optimizer, lr_scheduler, accuracy, path):
-    save_state = {
-        "model": model.state_dict(),
-        "optimizer": optimizer.state_dict(),
-        "lr_scheduler": lr_scheduler.state_dict(),
-        "accuracy": accuracy,
-        "epoch": epoch,
-    }
+def count_parameters(model):
+    return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
-    save_path = os.path.join(path, f"checkpoint_epoch_{epoch}.pt")
-    torch.save(save_state, save_path)
-
-
-def save_best_model(model, optimizer, lr_scheduler, accuracy, path):
-    save_state = {
-        "model": model.state_dict(),
-        "optimizer": optimizer.state_dict(),
-        "lr_scheduler": lr_scheduler.state_dict(),
-        "accuracy": accuracy,
-    }
-
-    save_path = os.path.join(path, f"best_model.pt")
-    torch.save(save_state, save_path)
 
 
 def print_gpu_memory_usage():
@@ -83,41 +69,6 @@ def print_gpu_memory_usage():
     print("Cached:   ", round(torch.cuda.memory_reserved(0) / 1024**3, 1), "GB")
 
 
-def save_lists_to_file(loss_list, accuracy_list, save_path):
-    loss_array = np.array(loss_list)
-    accuracy_array = np.array(accuracy_list)
-
-    data_array = np.column_stack((loss_array, accuracy_array))
-
-    np.savetxt(
-        save_path, data_array, delimiter=",", header="Loss,Accuracy", comments=""
-    )
-
-
-def plot_loss_accuracy(loss_list, accuracy_list):
-    epochs = len(loss_list)
-
-    # Plotting loss
-    plt.figure(figsize=(10, 5))
-    plt.plot(range(1, epochs + 1), loss_list, label="Loss", color="blue")
-    plt.xlabel("Epoch")
-    plt.ylabel("Loss")
-    plt.title("Training Loss")
-    plt.legend()
-    plt.grid(True)
-    plt.show()
-
-    # Plotting accuracy
-    plt.figure(figsize=(10, 5))
-    plt.plot(range(1, epochs + 1), accuracy_list, label="Accuracy", color="green")
-    plt.xlabel("Epoch")
-    plt.ylabel("Accuracy")
-    plt.title("Training Accuracy")
-    plt.legend()
-    plt.grid(True)
-    plt.show()
-
-
 def set_weight_decay(model, skip_list=(), skip_keywords=()):
     has_decay = []
     no_decay = []
@@ -189,17 +140,33 @@ def build_optimizer(model, learning_rate):
     optimizer = optim.Adam(parameters, lr=learning_rate)
     return optimizer
 
-def compute_pruning_ammount(epoch):
 
-    if epoch == 50:
-        return 0.15
 
-    # elif epoch == 50:
-    #     return 0.15
+def kmeans_clustering(X_query, num_clusters):
+    B, N, _ = X_query.size()
+    X_query_flattened = X_query.view(B * N, -1).detach().cpu().numpy()
+    kmeans = KMeans(n_clusters=num_clusters)
+    cluster_indices = kmeans.fit_predict(X_query_flattened)
+    cluster_indices = torch.tensor(cluster_indices, device=X_query.device)
+    return cluster_indices
 
-    # elif 95 < epoch < 99:
-    #     return 0.01
-    elif epoch == 100:
-        return 0.3
-    
-    return 0
+
+def topk_operation(X_query, cluster_indices, num_clusters, k):
+    B, N, _ = X_query.size()
+    XK = torch.zeros(B, num_clusters, k, X_query.size(-1), device=X_query.device)
+    XV = torch.zeros(B, num_clusters, k, X_query.size(-1), device=X_query.device)
+
+    for b in range(B):
+        for j in range(num_clusters):
+            mask = cluster_indices[b] == j
+            relevant_keys = X_query[b][mask]
+            topk_indices = torch.topk(
+                torch.norm(relevant_keys - X_query[b][j], dim=-1), k
+            ).indices
+            topk_indices = topk_indices[
+                topk_indices < len(relevant_keys)
+            ]  # Ensure indices are within bounds
+            relevant_keys = relevant_keys[topk_indices]  # Correct shape for indexing
+            XK[b][j][: len(relevant_keys)] = relevant_keys
+            XV[b][j][: len(relevant_keys)] = X_query[b][mask][topk_indices]
+    return XK, XV

@@ -6,13 +6,13 @@ import torch.nn.utils.prune as prune
 import torch.nn.functional as F
 from sklearn.model_selection import KFold
 
-from helpers import (
+from data_loader import (
     load_checkpoint,
     save_best_model,
-    plot_loss_accuracy,
     save_lists_to_file,
-    compute_pruning_ammount,
 )
+from helpers import compute_pruning_ammount
+from plotter import plot_loss_accuracy
 
 
 def test(model, test_loader, device):
@@ -21,30 +21,28 @@ def test(model, test_loader, device):
 
     correct = 0
     total = 0
-
     with torch.no_grad():
         for inputs, labels in test_loader:
             inputs, labels = inputs.to(device), labels.to(device)
 
-            outputs = model(inputs)
+            outputs,_ = model(inputs)
             # _, predicted = torch.max(outputs.sup, 1)
             _, predicted = torch.max(outputs, 1)
 
             total += labels.size(0)
             correct += (predicted == labels).sum().item()
-
     accuracy = 100 * correct / total
     print(f"Test Accuracy: {accuracy:.2f}%")
     return accuracy
 
 
-def test_compare_inference(model, image_batch, device):
+def test_batch(model, image_batch, device):
     model.to(device)
     model.eval()
 
     with torch.no_grad():
         inputs = image_batch.to(device)
-        outputs = model(inputs)
+        outputs,_ = model(inputs)
         _, predicted = torch.max(outputs, 1)
 
     return predicted
@@ -90,8 +88,8 @@ def train(
 
             optimizer.zero_grad()
             with torch.cuda.amp.autocast(enabled=True):
-                outputs = model(inputs)
-                loss = criterion(outputs, labels)
+                outputs,_ = model(inputs)    #cambiado el outputs a outputs[0] para probar kd
+                loss = criterion(outputs, labels) 
 
             scaler.scale(loss).backward()
             scaler.step(optimizer)
@@ -104,7 +102,7 @@ def train(
         print(f"Epoch {epoch+1}/{epochs}, Loss: {epoch_loss}")
         print("Current Learning Rate:", optimizer.param_groups[0]["lr"])
 
-        _, predicted = outputs.max(1)
+        _, predicted = outputs.max(1)        #cambiado el outputs a outputs[0] para probar kd
         total += labels.size(0)
         correct += predicted.eq(labels).sum().item()
         accuracy = 100.0 * correct / total
@@ -118,7 +116,6 @@ def train(
                 save_best_model(
                     model, optimizer, lr_scheduler, max_test_accuracy, save_path
                 )
-
         loss_list.append(epoch_loss)
         accuracy_list.append(test_accuracy)
         if pruning_method:
@@ -147,8 +144,7 @@ def train_kd(
     train_loader,
     test_loader,
     T,
-    soft_target_loss_weight,
-    ce_loss_weight,
+    alpha,
     epochs,
     learning_rate,
     device,
@@ -186,10 +182,10 @@ def train_kd(
             inputs, labels = inputs.to(device), labels.to(device)
 
             with torch.no_grad():
-                teacher_logits = teacher(inputs)
+                teacher_logits,_ = teacher(inputs)
 
             with torch.cuda.amp.autocast(enabled=True):
-                student_logits = student(inputs)
+                student_logits,_ = student(inputs)
                 soft_targets = nn.functional.softmax(teacher_logits / T, dim=-1)
                 soft_prob = nn.functional.log_softmax(student_logits / T, dim=-1)
 
@@ -202,8 +198,8 @@ def train_kd(
                 label_loss = criterion(student_logits, labels)
 
                 loss = (
-                    soft_target_loss_weight * soft_targets_loss
-                    + ce_loss_weight * label_loss
+                    alpha * soft_targets_loss
+                    +(1-alpha) * label_loss
                 )
 
             scaler.scale(loss).backward()
@@ -237,6 +233,121 @@ def train_kd(
         accuracy = 100.0 * correct / total
         print(f"accuracy: {accuracy}%")
         test_accuracy = test(student, test_loader, device)
+        if test_accuracy > max_test_accuracy:
+            max_test_accuracy = test_accuracy
+            print(f"max_test_accuracy : {max_test_accuracy}")
+            if save_path:
+                save_best_model(
+                    student, optimizer, lr_scheduler, test_accuracy, save_path
+                )
+
+        loss_list.append(epoch_loss)
+        accuracy_list.append(test_accuracy)
+
+    print(f"max_training_accuracy : {max_test_accuracy}")
+    plot_loss_accuracy(loss_list, accuracy_list)
+    if save_path:
+        save_lists_path = f"{save_path}/loss_and_accuracy"
+        save_lists_to_file(loss_list, accuracy_list, save_path=save_lists_path)
+
+
+def train_feature_kd(
+    student,
+    teacher,
+    train_loader,
+    test_loader,
+    T,
+    alpha,
+    epochs,
+    learning_rate,
+    device,
+    weight_decay,
+    hard = False,
+    save_path=None,
+    load_path_teacher=None,
+):
+    if load_path_teacher:
+        load_checkpoint(teacher, load_path_teacher)
+
+    criterion = nn.CrossEntropyLoss()
+    optimizer = optim.Adam(
+        student.parameters(), lr=learning_rate, weight_decay=weight_decay
+    )
+    lr_scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, epochs)
+    scaler = torch.cuda.amp.GradScaler(enabled=True)
+
+    max_test_accuracy = 0
+    teacher.eval()
+    student.train()
+    loss_list = []
+    accuracy_list = []
+
+    min_layers = min(len(teacher.transformer.layers), len(student.transformer.layers))
+    for epoch in range(epochs):
+        running_loss = 0.0
+        correct = 0
+        total = 0
+
+        for i, (inputs, labels) in enumerate(train_loader):
+            optimizer.zero_grad()
+            inputs, labels = inputs.to(device), labels.to(device)
+
+            with torch.no_grad():
+                teacher_logits, _ = teacher(inputs)
+
+            student_logits, distill_logits = student(inputs)
+
+            soft_targets = nn.functional.log_softmax(teacher_logits / T, dim=-1)
+            soft_prob = nn.functional.log_softmax(student_logits / T, dim=-1)
+            soft_targets_loss = (
+                torch.sum(soft_targets * (soft_targets - soft_prob))
+                / soft_prob.size(0)
+                * (T**2)
+            )
+
+            # feature_loss = 0.0
+            # for teacher_feat, student_feat in zip(
+            #     teacher_intermediate[:min_layers], student_intermediate[:min_layers]
+            # ):
+            #     feature_loss += nn.functional.mse_loss(student_feat, teacher_feat)
+
+            label_loss = criterion(student_logits, labels)
+            if not hard:
+                distill_loss = F.kl_div(
+                    F.log_softmax(distill_logits / T, dim = -1),
+                    F.softmax(teacher_logits / T, dim = -1),
+                reduction = 'batchmean')
+                distill_loss *= T ** 2       
+            else:
+                teacher_labels = teacher_logits.argmax(dim = -1)
+                distill_loss = F.cross_entropy(distill_logits, teacher_labels)         
+
+            loss = (
+                (1-alpha)* soft_targets_loss
+                + distill_loss * alpha
+                # + feature_loss
+            )
+
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
+
+            running_loss += loss.item()
+
+        lr_scheduler.step()
+        epoch_loss = running_loss / len(train_loader)
+        print(f"Epoch {epoch+1}/{epochs}, Loss: {epoch_loss}")
+        print("Current Learning Rate:", optimizer.param_groups[0]["lr"])
+
+        # Compute accuracy
+        _, predicted = student_logits.max(1)
+        total += labels.size(0)
+        correct += predicted.eq(labels).sum().item()
+        accuracy = 100.0 * correct / total
+        print(f"accuracy: {accuracy}%")
+        test_accuracy = test(student, test_loader, device)
+
+        # Update max test accuracy and save model if necessary
         if test_accuracy > max_test_accuracy:
             max_test_accuracy = test_accuracy
             print(f"max_test_accuracy : {max_test_accuracy}")
