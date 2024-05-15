@@ -94,8 +94,8 @@ def blocksparse_attention_impl(q, k, v, heads, attn_mode, local_attn_ctx=None, b
         n, t, embd = a.size()
         bT_ctx = n_ctx // local_attn_ctx
         a = torch.reshape(a, [n, local_attn_ctx, bT_ctx, embd])
-        a = torch.transpose(a, 0, 2)  # Swap dimensions 0 and 2
-        a = torch.transpose(a, 1, 2)  # Swap dimensions 1 and 2
+        a = torch.transpose(a, 0, 2)  # CAMBIADO: Swap dimensions 0 and 2
+        a = torch.transpose(a, 1, 2)  # CAMBIADO: Swap dimensions 1 and 2
         a = torch.reshape(a, [n, t, embd])
     return a
 
