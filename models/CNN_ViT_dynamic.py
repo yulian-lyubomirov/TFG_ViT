@@ -61,13 +61,12 @@ class CNNLayer(nn.Module):
         # self.fc = nn.Linear(dim, num_classes)
 
     def forward(self, x):
-        print(x.shape)
         b, d,n,l = x.shape
         # x = rearrange(x, 'b n d -> b d n 1')
         x = self.conv(x)
         x = self.pool(x)
-        # x = rearrange(x, 'b d 1 1 -> b d')
-        x = rearrange(x, 'b d n 1 -> b n d', n=n) 
+        x = rearrange(x, 'b d n 1 -> b n d')
+        # x = rearrange(x, 'b d n 1 -> b n d', n=n) 
         # x = self.fc(x)
         return x
 
@@ -89,30 +88,51 @@ class Transformer(nn.Module):
         self.mlp_head = nn.Linear(dim, num_classes)
 
     def forward(self, x):
+        b, d,n = x.shape
+
         for idx, (attn, ff) in enumerate(self.layers):
             x = attn(x) + x
             x = ff(x) + x
 
             if idx == (self.depth-2):
                 logits = rearrange(x, 'b n d -> b d n 1')
-                x = self.cnn_layer1(logits) + x
-                logits = rearrange(x, 'b d 1 1 -> b d')
-                logits = self.mlp_head(logits)
+                cnn_out = self.cnn_layer1(logits)
+                x = x + cnn_out
+                logits = self.mlp_head(cnn_out)
                 probabilities = torch.softmax(logits, dim=-1)
                 max_probability, _ = torch.max(probabilities, dim=-1)
-                confidence = max_probability.item()
-                if self.inference and confidence > self.confidence_threshold:
-                    return logits
+                if self.inference:
+                    confidence = max_probability.item()
+                    if confidence > self.confidence_threshold:
+                        return logits
 
-            if idx == (self.depth-1):
+            if idx == (self.depth - 1):
                 logits = self.mlp_head(x)
                 probabilities = torch.softmax(logits, dim=-1)
                 max_probability, _ = torch.max(probabilities, dim=-1)
-                confidence = max_probability.item()
-                if self.inference and confidence > self.confidence_threshold:
-                    return x
-                x = self.cnn_layer2(x)
-                x = self.mlp_head(x)
+                if self.inference:
+                    confidence = max_probability.item()
+
+                    if confidence > self.confidence_threshold:
+                        return x
+                logits = rearrange(x, 'b n d -> b d n 1')    
+                cnn_out = self.cnn_layer2(logits)
+                x = x + cnn_out
+                # x = self.mlp_head(x)
+
+                # x = rearrange(x, 'b n d -> b d n 1')
+                # cnn_out = self.cnn_layer2(x)
+                # # cnn_out = rearrange(cnn_out, 'b d 1 1 -> b 1 d', d=x.shape[1])
+                # x = rearrange(x, 'b d n 1 -> b 1 d n')
+            
+                # print(f"x {x.shape}")
+                # print(f"cnn {cnn_out.shape}")
+                # x = x + cnn_out
+                # x = rearrange(x, 'b 1 d n -> b n d')
+                # print(f"x {x.shape}")
+                # print(f"cnn {cnn_out.shape}")
+                # x = x + cnn_out
+                # x = self.mlp_head(x)
 
 
         x = x.mean(dim=1)
