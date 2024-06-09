@@ -98,22 +98,33 @@ class Transformer(nn.Module):
                 logits = rearrange(x, 'b n d -> b d n 1')
                 cnn_out = self.cnn_layer1(logits)
                 x = x + cnn_out
+                # print (f"logits {logits.shape}")
+                # print (f"x {x.shape}")
                 logits = self.mlp_head(cnn_out)
                 probabilities = torch.softmax(logits, dim=-1)
                 max_probability, _ = torch.max(probabilities, dim=-1)
+                # print(f"probabilities {probabilities.shape}")
+                # print(f"max_probability {max_probability.shape}")
                 if self.inference:
                     confidence = max_probability.item()
                     if confidence > self.confidence_threshold:
+                        print('early1')
                         return logits
 
             if idx == (self.depth - 1):
                 logits = self.mlp_head(x)
+                # print (f"logits {logits.shape}")
+                # print (f"x {x.shape}")
+                logits = logits[:, 0]
                 probabilities = torch.softmax(logits, dim=-1)
                 max_probability, _ = torch.max(probabilities, dim=-1)
+                # print(f"probabilities {probabilities.shape}")
+                # print(f"max_probability {max_probability.shape}")
                 if self.inference:
                     confidence = max_probability.item()
 
                     if confidence > self.confidence_threshold:
+                        print('early2')
                         return x
                 logits = rearrange(x, 'b n d -> b d n 1')    
                 cnn_out = self.cnn_layer2(logits)
@@ -134,10 +145,10 @@ class Transformer(nn.Module):
                 # x = x + cnn_out
                 # x = self.mlp_head(x)
 
-
-        x = x.mean(dim=1)
-        final_logits = self.mlp_head(x)
-        return final_logits
+        # x = x.mean(dim=1)
+        # final_logits = self.mlp_head(x)
+        # return final_logits
+        return x
 
 class CNN_ViT_dynamic(nn.Module):
     def __init__(self, *, image_size, patch_size, num_classes, dim, depth, heads, mlp_dim, pool='cls', channels=3, dim_head=64, dropout=0., emb_dropout=0., inference=False):
@@ -180,6 +191,9 @@ class CNN_ViT_dynamic(nn.Module):
         x += self.pos_embedding[:, :(n + 1)]
         x = self.dropout(x)
 
-        logits = self.transformer(x)
+        x = self.transformer(x)
+        x = x.mean(dim = 1) if self.pool == 'mean' else x[:, 0]
+        x = self.to_latent(x)
+        x=self.mlp_head(x)
 
-        return logits, None
+        return x, None
