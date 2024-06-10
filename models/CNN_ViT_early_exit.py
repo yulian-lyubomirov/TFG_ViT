@@ -101,8 +101,8 @@ class Transformer(nn.Module):
                         return early_exit_logits
 
         x = x.mean(dim=1)
-        final_logits = self.mlp_head(x)
-        return final_logits if early_exit_logits is None else early_exit_logits
+        x = self.mlp_head(x)
+        return x
 
 class CNN_ViT_early_exit(nn.Module):
     def __init__(self, *, image_size, patch_size, num_classes, dim, depth, heads, mlp_dim, pool='cls', channels=3, dim_head=64, dropout=0., emb_dropout=0., early_exit=False):
