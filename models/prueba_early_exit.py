@@ -50,74 +50,62 @@ class Attention(nn.Module):
 
         out = torch.matmul(attn, v)
         out = rearrange(out, 'b h n d -> b n (h d)')
-        return self.to_out(out)
+        out = self.to_out(out)
+        return out
 
 class CNNLayer(nn.Module):
     def __init__(self, dim, num_classes):
         super().__init__()
         self.conv = nn.Conv2d(dim, dim, kernel_size=3, stride=1, padding=1)
         self.pool = nn.AdaptiveAvgPool2d(1)
+        self.fc = nn.Linear(dim, num_classes)
 
     def forward(self, x):
-        b, d, n, l = x.shape
+        x = rearrange(x, 'b n d -> b d n 1')
         x = self.conv(x)
         x = self.pool(x)
-        x = rearrange(x, 'b d n 1 -> b n d')
+        x = rearrange(x, 'b d 1 1 -> b d')
+        x = self.fc(x)
         return x
 
 class Transformer(nn.Module):
-    def __init__(self, dim, depth, heads, dim_head, mlp_dim, num_classes, inference, dropout=0.1):
+    def __init__(self, dim, depth, heads, dim_head, mlp_dim, num_classes, early_exit, dropout=0.1):
         super().__init__()
         self.layers = nn.ModuleList([])
-        self.inference = inference
-        self.confidence_threshold = 0.9
-        self.depth = depth
-        self.cnn_layer1 = CNNLayer(dim, num_classes)
-        self.cnn_layer2 = CNNLayer(dim, num_classes)
+        self.early_exit = early_exit
+        self.cnn_layer = CNNLayer(dim, num_classes)
         for _ in range(depth):
             self.layers.append(nn.ModuleList([
                 Attention(dim, heads=heads, dim_head=dim_head, dropout=dropout),
                 FeedForward(dim, mlp_dim, dropout=dropout)
             ]))
-        
         self.mlp_head = nn.Linear(dim, num_classes)
 
-    def forward(self, x):
+    def forward(self, x, confidence_threshold=0.9):
+        early_exit_logits = None
         for idx, (attn, ff) in enumerate(self.layers):
-            x = attn(x) + x
+            x_attn = attn(x)
+            x += x_attn
             x = ff(x) + x
 
-            if idx == (self.depth - 2):
-                logits = rearrange(x, 'b n d -> b d n 1')
-                cnn_out = self.cnn_layer1(logits)
-                x = x + cnn_out
-                logits = self.mlp_head(cnn_out)
-                probabilities = torch.softmax(logits, dim=-1)
-                max_probability, _ = torch.max(probabilities, dim=-1)
-                if self.inference:
+            # Always compute CNN output for backpropagation purposes
+            if idx == 3:
+                early_exit_logits = self.cnn_layer(x)
+                if self.early_exit:
+                    probabilities = torch.softmax(early_exit_logits, dim=-1)
+                    max_probability, _ = torch.max(probabilities, dim=-1)
                     confidence = max_probability.item()
-                    if confidence > self.confidence_threshold:
-                        print('early1')
-                        return logits
+                    print(confidence)
+                    if confidence > confidence_threshold:
+                        print('early_exit')
+                        return early_exit_logits
 
-            if idx == (self.depth - 1):
-                logits = self.mlp_head(x)
-                logits = logits[:, 0]
-                probabilities = torch.softmax(logits, dim=-1)
-                max_probability, _ = torch.max(probabilities, dim=-1)
-                if self.inference:
-                    confidence = max_probability.item()
-                    if confidence > self.confidence_threshold:
-                        print('early2')
-                        return logits
-                logits = rearrange(x, 'b n d -> b d n 1')    
-                cnn_out = self.cnn_layer2(logits)
-                x = x + cnn_out
+        x = x.mean(dim=1)
+        final_logits = self.mlp_head(x)
+        return final_logits if early_exit_logits is None else early_exit_logits
 
-        return self.mlp_head(x.mean(dim=1))
-
-class CNN_ViT_dynamic(nn.Module):
-    def __init__(self, *, image_size, patch_size, num_classes, dim, depth, heads, mlp_dim, pool='cls', channels=3, dim_head=64, dropout=0., emb_dropout=0., inference=False):
+class prueba_early_exit(nn.Module):
+    def __init__(self, *, image_size, patch_size, num_classes, dim, depth, heads, mlp_dim, pool='cls', channels=3, dim_head=64, dropout=0., emb_dropout=0., early_exit=False):
         super().__init__()
         image_height, image_width = pair(image_size)
         patch_height, patch_width = pair(patch_size)
@@ -126,7 +114,7 @@ class CNN_ViT_dynamic(nn.Module):
 
         num_patches = (image_height // patch_height) * (image_width // patch_width)
         patch_dim = channels * patch_height * patch_width
-        assert pool in {'cls', 'mean'}, 'pool type must be either cls (cls token) or mean pooling'
+        assert pool in {'cls', 'mean'}, 'pool type must be either cls (cls token) or mean (mean pooling)'
 
         self.to_patch_embedding = nn.Sequential(
             Rearrange('b c (h p1) (w p2) -> b (h w) (p1 p2 c)', p1=patch_height, p2=patch_width),
@@ -136,9 +124,9 @@ class CNN_ViT_dynamic(nn.Module):
         self.pos_embedding = nn.Parameter(torch.randn(1, num_patches + 1, dim))
         self.cls_token = nn.Parameter(torch.randn(1, 1, dim))
         self.dropout = nn.Dropout(emb_dropout)
-        self.inference = inference
+        self.early_exit = early_exit
 
-        self.transformer = Transformer(dim, depth, heads, dim_head, mlp_dim, num_classes, inference, dropout)
+        self.transformer = Transformer(dim, depth, heads, dim_head, mlp_dim, num_classes, early_exit, dropout)
 
         self.pool = pool
         self.to_latent = nn.Identity()

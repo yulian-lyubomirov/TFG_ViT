@@ -60,12 +60,18 @@ class CNNLayer(nn.Module):
         self.pool = nn.AdaptiveAvgPool2d(1)
         self.fc = nn.Linear(dim, num_classes)
 
-    def forward(self, x):
-        x = rearrange(x, 'b n d -> b d n 1')
+    # def forward(self, x):
+    #     x = rearrange(x, 'b n d -> b d n 1')
+    #     x = self.conv(x)
+    #     x = self.pool(x)
+    #     x = rearrange(x, 'b d 1 1 -> b d')
+    #     x = self.fc(x)
+    #     return x
+    def forward(self,input):
+        x = rearrange(input, 'b n d -> b d n 1')
         x = self.conv(x)
         x = self.pool(x)
-        x = rearrange(x, 'b d 1 1 -> b d')
-        x = self.fc(x)
+        x = rearrange(x, 'b d n 1 -> b n d')
         return x
 
 class Transformer(nn.Module):
@@ -82,7 +88,7 @@ class Transformer(nn.Module):
         self.mlp_head = nn.Linear(dim, num_classes)
 
     def forward(self, x, confidence_threshold=0.9):
-        early_exit_logits = None
+        cnn_out = None
         for idx, (attn, ff) in enumerate(self.layers):
             x_attn = attn(x)
             x += x_attn
@@ -90,19 +96,20 @@ class Transformer(nn.Module):
 
             # Always compute CNN output for backpropagation purposes
             if idx == 3:
-                early_exit_logits = self.cnn_layer(x)
+                cnn_out = self.cnn_layer(x)
+                x= x + cnn_out 
                 if self.early_exit:
-                    probabilities = torch.softmax(early_exit_logits, dim=-1)
+                    probabilities = torch.softmax(cnn_out, dim=-1)
                     max_probability, _ = torch.max(probabilities, dim=-1)
                     confidence = max_probability.item()
                     print(confidence)
                     if confidence > confidence_threshold:
                         print('early_exit')
-                        return early_exit_logits
+                        return cnn_out
 
         x = x.mean(dim=1)
-        final_logits = self.mlp_head(x)
-        return final_logits if early_exit_logits is None else early_exit_logits
+        x = self.mlp_head(x)
+        return x
 
 class CNN_ViT_early_exit(nn.Module):
     def __init__(self, *, image_size, patch_size, num_classes, dim, depth, heads, mlp_dim, pool='cls', channels=3, dim_head=64, dropout=0., emb_dropout=0., early_exit=False):

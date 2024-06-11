@@ -53,41 +53,30 @@ class Attention(nn.Module):
         out = torch.matmul(attn, v)
         out = rearrange(out, 'b h n d -> b n (h d)')
         out = self.to_out(out)
-        return out #attn
-
+        return out,attn
 
 class Transformer(nn.Module):
-    def __init__(self, dim, depth, heads, dim_head, mlp_dim, early_exit, dropout = 0.1):
+    def __init__(self, dim, depth, heads, dim_head, mlp_dim, dropout = 0.):
         super().__init__()
         self.layers = nn.ModuleList([])
-        self.early_exit=early_exit
         for _ in range(depth):
             self.layers.append(nn.ModuleList([
                 Attention(dim, heads = heads, dim_head = dim_head, dropout = dropout),
                 FeedForward(dim, mlp_dim, dropout = dropout)
             ]))
-        self.mlp_head = nn.Linear(dim, 100) 
+    def forward(self, x):
+        intermediate_feautres=[]
+        attn_matrices = []
+        for attn, ff in self.layers:
+            x_attn,attn_matrix = attn(x)
+            x+=x_attn
+            x = ff(x) + x
+            attn_matrices.append(attn_matrix)
+            intermediate_feautres.append(x)
+        return x,attn_matrices,intermediate_feautres
 
-    def forward(self, x, confidence_threshold=0.9):
-        for idx,(attn,ff) in enumerate(self.layers):
-            x_attn= attn(x)
-            x += x_attn
-            x = ff(x) + x   
-            if self.early_exit and idx == 3 :
-                logits = self.mlp_head(x[:, 0])
-                probabilities = torch.softmax(logits, dim=-1)
-                max_probability, _ = torch.max(probabilities, dim=-1)
-                confidence = max_probability.item()
-                print(confidence)
-                confidence = max_probability  # Using maximum class probabilities as confidences
-                if confidence > confidence_threshold:
-                    print('early_exit')
-                    break
-        return x
-
-
-class ViT_early_exit(nn.Module):
-    def __init__(self, *, image_size, patch_size, num_classes, dim, depth, heads, mlp_dim, pool = 'cls', channels = 3, dim_head = 64, dropout = 0., emb_dropout = 0.,early_exit=False):
+class ViT(nn.Module):
+    def __init__(self, *, image_size, patch_size, num_classes, dim, depth, heads, mlp_dim, pool = 'cls', channels = 3, dim_head = 64, dropout = 0., emb_dropout = 0.,feature_distill=False):
         super().__init__()
         image_height, image_width = pair(image_size)
         patch_height, patch_width = pair(patch_size)
@@ -106,9 +95,8 @@ class ViT_early_exit(nn.Module):
         self.pos_embedding = nn.Parameter(torch.randn(1, num_patches + 1, dim))
         self.cls_token = nn.Parameter(torch.randn(1, 1, dim))
         self.dropout = nn.Dropout(emb_dropout)
-        self.early_exit=early_exit
 
-        self.transformer = Transformer(dim, depth, heads, dim_head, mlp_dim,early_exit, dropout)
+        self.transformer = Transformer(dim, depth, heads, dim_head, mlp_dim, dropout)
 
         self.pool = pool
         self.to_latent = nn.Identity()
@@ -117,6 +105,7 @@ class ViT_early_exit(nn.Module):
             nn.LayerNorm(dim),
             nn.Linear(dim, num_classes)
         )
+        self.feature_distill=feature_distill
 
     def forward(self, img):
         x = self.to_patch_embedding(img)
@@ -127,11 +116,13 @@ class ViT_early_exit(nn.Module):
         x += self.pos_embedding[:, :(n + 1)]
         x = self.dropout(x)
 
-        x = self.transformer(x)
-
+        x,attn_matrices,intermediate_feautres = self.transformer(x)
 
         x = x.mean(dim = 1) if self.pool == 'mean' else x[:, 0]
 
         x = self.to_latent(x)
         x=self.mlp_head(x)
-        return x,None
+        if self.feature_distill:
+            return x ,attn_matrices,intermediate_feautres
+        else:
+            return x,attn_matrices
