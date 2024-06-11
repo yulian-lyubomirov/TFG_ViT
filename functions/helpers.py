@@ -13,7 +13,10 @@ def feature_distillation_loss(student_features, teacher_features):
     Compute the feature distillation loss.
     """
     loss = 0.0
-    for sf, tf in zip(student_features, teacher_features):
+    num_student_layers = len(student_features)
+    for i in range(num_student_layers):
+        sf = student_features[i]
+        tf = teacher_features[i]
         loss += F.mse_loss(sf, tf)
     return loss
 
