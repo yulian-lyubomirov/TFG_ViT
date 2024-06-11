@@ -53,33 +53,18 @@ class Attention(nn.Module):
         out = self.to_out(out)
         return out
 
-class CNNLayer(nn.Module):
-    def __init__(self, dim, num_classes):
-        super().__init__()
-        self.conv = nn.Conv2d(dim, dim, kernel_size=3, stride=1, padding=1)
-        self.pool = nn.AdaptiveAvgPool2d(1)
-        self.fc = nn.Linear(dim, num_classes)
-
-    # def forward(self, x):
-    #     x = rearrange(x, 'b n d -> b d n 1')
-    #     x = self.conv(x)
-    #     x = self.pool(x)
-    #     x = rearrange(x, 'b d 1 1 -> b d')
-    #     x = self.fc(x)
-    #     return x
-    def forward(self,input):
-        x = rearrange(input, 'b n d -> b d n 1')
-        x = self.conv(x)
-        x = self.pool(x)
-        x = rearrange(x, 'b d n 1 -> b n d')
-        return x
-
 class Transformer(nn.Module):
     def __init__(self, dim, depth, heads, dim_head, mlp_dim, num_classes, early_exit, dropout=0.1):
         super().__init__()
         self.layers = nn.ModuleList([])
+        self.depth = depth
         self.early_exit = early_exit
-        self.cnn_layer = CNNLayer(dim, num_classes)
+
+        # Convolutional layer
+        self.conv = nn.Conv2d(dim, dim, kernel_size=2, stride=1, padding=1)
+        self.pool = nn.AdaptiveAvgPool2d(1)
+        self.fc = nn.Linear(dim, num_classes)
+
         for _ in range(depth):
             self.layers.append(nn.ModuleList([
                 Attention(dim, heads=heads, dim_head=dim_head, dropout=dropout),
@@ -88,28 +73,45 @@ class Transformer(nn.Module):
         self.mlp_head = nn.Linear(dim, num_classes)
 
     def forward(self, x, confidence_threshold=0.9):
-        cnn_out = None
+        early_exit_info = {'exited': False, 'confidence': 0.0, 'correct': False}
+        cnn_logits = None
+
         for idx, (attn, ff) in enumerate(self.layers):
             x_attn = attn(x)
-            x += x_attn
-            x = ff(x) + x
+            x = x + x_attn
+            x = x + ff(x)
 
             # Always compute CNN output for backpropagation purposes
-            if idx == 3:
-                cnn_out = self.cnn_layer(x)
-                x= x + cnn_out 
+            if idx == self.depth - 2:
+                x = rearrange(x, 'b n d -> b d n 1')
+                x = self.conv(x)
+                x = self.pool(x)
+                cnn_out = x
+                x = rearrange(x, 'b d n 1 -> b n d')
+                cnn_logits = rearrange(cnn_out, 'b d 1 1 -> b d')
+                cnn_logits = self.fc(cnn_logits)
+                
+                # x = x + cnn_out
+                
                 if self.early_exit:
-                    probabilities = torch.softmax(cnn_out, dim=-1)
-                    max_probability, _ = torch.max(probabilities, dim=-1)
+                    probabilities = torch.softmax(cnn_logits, dim=-1)
+                    max_probability, predicted = torch.max(probabilities, dim=-1)
                     confidence = max_probability.item()
+                    
                     print(confidence)
                     if confidence > confidence_threshold:
-                        print('early_exit')
-                        return cnn_out
-
+                        early_exit_info['exited'] = True
+                        early_exit_info['confidence'] = confidence
+                        return cnn_logits, early_exit_info
         x = x.mean(dim=1)
-        x = self.mlp_head(x)
-        return x
+        final_logits = self.mlp_head(x)
+        return final_logits if cnn_logits is None else (final_logits + cnn_logits), early_exit_info
+        # x = x[:, 0]
+        # # Agrega la salida de la CNN a la salida cls_token
+        # x += early_exit_logits.squeeze(1) if early_exit_logits is not None else 0
+
+        # x = self.mlp_head(x)
+        # return x, early_exit_info
 
 class CNN_ViT_early_exit(nn.Module):
     def __init__(self, *, image_size, patch_size, num_classes, dim, depth, heads, mlp_dim, pool='cls', channels=3, dim_head=64, dropout=0., emb_dropout=0., early_exit=False):
@@ -152,6 +154,6 @@ class CNN_ViT_early_exit(nn.Module):
         x += self.pos_embedding[:, :(n + 1)]
         x = self.dropout(x)
 
-        logits = self.transformer(x)
-
-        return logits, None
+        logits,early_exit_info = self.transformer(x)
+        # logits = self.transformer(x)
+        return logits, early_exit_info
