@@ -180,33 +180,33 @@ def get_random_image(img_class, dataset='cifar-100'):
     return x, img
 
 
-def create_comparison_table(models, models_accuracy):
+def create_comparison_table(models, models_accuracy, model_names):
     """
     Creates a comparison table for model performance.
 
     Args:
         models (list of torch.nn.Module): List of models to compare.
         models_accuracy (list of float): List of accuracies corresponding to the models.
+        model_names (list of str): List of names corresponding to the models.
 
     Returns:
         pd.DataFrame: A pandas DataFrame containing the comparison table.
     """
     models_info = []
     
-    for model, accuracy in zip(models, models_accuracy):
+    for model, accuracy, name in zip(models, models_accuracy, model_names):
         num_params = sum(p.numel() for p in model.parameters())
         depth = helpers.calculate_model_depth(model)
         num_heads = helpers.get_num_heads(model)
         num_cnn_layers = helpers.count_cnn_layers(model)
         
         models_info.append({
-            'model_name': model.__class__.__name__,
+            'model_name': name,
             'num_params': num_params,
             'accuracy': accuracy,
-            'depth': depth,         
-            'num_heads': num_heads, 
+            'depth': depth,
+            'num_heads': num_heads,
             'num_cnn_layers': num_cnn_layers,
-
         })
     
     # Create a DataFrame from the models_info list

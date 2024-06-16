@@ -69,11 +69,11 @@ class Attention(nn.Module):
 #         return x
 
 class CNNLayer(nn.Module):
-    def __init__(self, dim, num_classes):
+    def __init__(self, dim, mlp_dim):
         super().__init__()
-        self.conv = nn.Conv2d(dim, dim, kernel_size=2, stride=1, padding=1)
-        self.pool = nn.AdaptiveAvgPool2d(1)
-        self.fc = nn.Linear(dim, num_classes)
+        self.conv = nn.Conv2d(dim, mlp_dim, kernel_size=2, stride=1, padding=1)
+        self.pool = nn.AdaptiveMaxPool2d(1)
+        self.fc = nn.Linear(mlp_dim, dim)
 
     def forward(self, x):
         x = rearrange(x, 'b n d -> b d n 1')
@@ -82,6 +82,7 @@ class CNNLayer(nn.Module):
         cnn_out = rearrange(x,'b d n 1 -> b n d')
         logits = rearrange(x, 'b d 1 1 -> b d')
         logits = self.fc(logits)
+        cnn_out = self.fc(cnn_out)
         return cnn_out,logits
 
 class Transformer(nn.Module):
@@ -89,7 +90,7 @@ class Transformer(nn.Module):
         super().__init__()
         self.layers = nn.ModuleList([])
         self.early_exit = early_exit
-        self.cnn_layer = CNNLayer(dim, num_classes)
+        self.cnn_layer = CNNLayer(dim, mlp_dim)
         self.depth = depth
         for _ in range(depth):
             self.layers.append(nn.ModuleList([
@@ -108,17 +109,17 @@ class Transformer(nn.Module):
             x = ff(x) + x
 
             # Always compute CNN output for backpropagation purposes
-            if idx == self.depth - 2:
+            if idx == self.depth - 3:
                 cnn_out, cnn_logits = self.cnn_layer(x)
+                # cnn_out,cnn_logits = self.cnn_layer(x)
                 x = x + cnn_out
-                # cnn_logits = self.mlp_head(x[:,0])
-                cnn_logits = self.mlp_head(cnn_out[:,0])
+                cnn_logits = self.mlp_head(x[:,0])
+                # cnn_logits = self.mlp_head(cnn_out)
                 # cnn_logits = self.mlp_head(cnn_logits)
                 if self.early_exit:
                     probabilities = torch.softmax(cnn_logits, dim=-1)
                     max_probability, _ = torch.max(probabilities, dim=-1)
                     confidence = max_probability.item()
-                    print(confidence)
                     if confidence > confidence_threshold:
                         early_exit_info['exited'] = True
                         early_exit_info['confidence'] = confidence

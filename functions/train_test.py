@@ -5,7 +5,8 @@ import os
 import torch.nn.utils.prune as prune
 import torch.nn.functional as F
 from sklearn.model_selection import KFold
-
+from models.ViT_early_exit import ViT_early_exit
+from models.ViT_CNN_early_exit import ViT_CNN_early_exit
 from functions.data_loader import (
     load_checkpoint,
     save_best_model,
@@ -19,19 +20,25 @@ from functions.helpers import (
 from functions.plotter import plot_loss_accuracy
 
 
-def test(model, test_loader, device, feature_kd=False):
+def test(model, test_loader, device, feature_kd=None):
     model.to(device)
     model.eval()
-
+    list_early_exit_info = []
     correct = 0
     total = 0
+    num_early_exits=0
     with torch.no_grad():
         for inputs, labels in test_loader:
             inputs, labels = inputs.to(device), labels.to(device)
-            if not feature_kd:
-                outputs, _ = model(inputs)
+            if feature_kd == 'feature' or feature_kd == 'combined':
+                outputs, _,__ = model(inputs)
+            elif isinstance(model,ViT_early_exit) or isinstance(model,ViT_CNN_early_exit):
+                outputs, early_exit_info = model(inputs)
+                list_early_exit_info.append(early_exit_info)
+                if early_exit_info['exited']:  # Check if early exit occurred
+                    num_early_exits += 1
             else:
-                outputs, _, __ = model(inputs)
+                outputs, _= model(inputs)
             # _, predicted = torch.max(outputs.sup, 1)
             _, predicted = torch.max(outputs, 1)
 
@@ -39,6 +46,9 @@ def test(model, test_loader, device, feature_kd=False):
             correct += (predicted == labels).sum().item()
     accuracy = 100 * correct / total
     print(f"Test Accuracy: {accuracy:.2f}%")
+    if isinstance(model,ViT_early_exit) or isinstance(model,ViT_CNN_early_exit):
+        print(f"Number of early exits: {num_early_exits}")
+        return accuracy,num_early_exits #,list_early_exit_info
     return accuracy
 
 
@@ -115,8 +125,10 @@ def train(
         correct += predicted.eq(labels).sum().item()
         accuracy = 100.0 * correct / total
         print(f"accuracy: {accuracy}%")
-
-        test_accuracy = test(model, test_loader, device)
+        if isinstance(model,ViT_early_exit) or isinstance(model,ViT_CNN_early_exit):
+            test_accuracy,_ = test(model, test_loader, device)
+        else:
+            test_accuracy = test(model, test_loader, device)
         if test_accuracy > max_test_accuracy:
             max_test_accuracy = test_accuracy
             print(f"max_test_accuracy : {max_test_accuracy}")
@@ -151,12 +163,13 @@ def train_kd(
     teacher,
     train_loader,
     test_loader,
-    T,
-    alpha,
     epochs,
     learning_rate,
     device,
-    feature_distill=False,
+    T,
+    alpha,
+    beta=None,
+    distill_mode=None,
     weight_decay=0.0005,
     save_path=None,
     load_path_teacher=None,
@@ -190,13 +203,15 @@ def train_kd(
             inputs, labels = inputs.to(device), labels.to(device)
 
             with torch.no_grad():
-                if feature_distill:
+                if distill_mode == 'feature':
                     teacher_logits, _, teacher_features = teacher(inputs)
-                else:
+                elif distill_mode == 'response':
                     teacher_logits, _ = teacher(inputs)
+                elif distill_mode == 'combined':
+                    teacher_logits, _, teacher_features = teacher(inputs)
 
             with torch.cuda.amp.autocast(enabled=True):
-                if feature_distill:
+                if distill_mode == 'feature':
                     student_logits, _, student_features = student(inputs)
                     distill_loss = feature_distillation_loss(
                         student_features, teacher_features
@@ -204,15 +219,25 @@ def train_kd(
                     # distill_loss_2 = knowledge_distillation_loss(
                     #     student_logits, teacher_logits, T
                     # )
-                else:
+                elif distill_mode == 'response':
                     student_logits, _ = student(inputs)
                     distill_loss = knowledge_distillation_loss(
                         student_logits, teacher_logits, T
                     )
+                elif distill_mode == 'combined':
+                    student_logits, _, student_features = student(inputs)
+                    feature_distill_loss = feature_distillation_loss(
+                        student_features, teacher_features
+                    )
+                    response_distill_loss = knowledge_distillation_loss(
+                        student_logits, teacher_logits, T
+                    )
 
                 label_loss = criterion(student_logits, labels)
-
-                loss = alpha * distill_loss + (1 - alpha-0.15) * label_loss #+0.15*distill_loss_2
+                if distill_mode == 'combined':
+                    loss = alpha * feature_distill_loss + beta * response_distill_loss+ (1 - (alpha-beta)) * label_loss 
+                else:
+                    loss = alpha * distill_loss + (1 - alpha) * label_loss 
 
             scaler.scale(loss).backward()
             scaler.step(optimizer)
@@ -244,7 +269,7 @@ def train_kd(
         correct += predicted.eq(labels).sum().item()
         accuracy = 100.0 * correct / total
         print(f"accuracy: {accuracy}%")
-        test_accuracy = test(student, test_loader, device, feature_distill)
+        test_accuracy = test(student, test_loader, device, distill_mode)
         if test_accuracy > max_test_accuracy:
             max_test_accuracy = test_accuracy
             print(f"max_test_accuracy : {max_test_accuracy}")

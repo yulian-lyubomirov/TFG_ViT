@@ -29,13 +29,18 @@ def plot_loss_accuracy(loss_list, accuracy_list,model_name):
 
 import matplotlib.pyplot as plt
 
-def plot_accuracy_comparison(accuracy_list_1,accuracy_list_2,model1_name,model2_name):
-    epochs = len(accuracy_list_1)
-
+def plot_accuracy_comparison(accuracy_lists, model_names):
+    epochs = len(accuracy_lists[0])
+    
     # Plotting accuracy
     plt.figure(figsize=(10, 5))
-    plt.plot(range(1, epochs + 1), accuracy_list_1, label=model1_name, color="green")
-    plt.plot(range(1, epochs + 1), accuracy_list_2, label=model2_name, color="orange")
+    
+    # Define colors for different models
+    colors = ['green', 'orange', 'blue', 'red', 'purple', 'brown', 'pink', 'gray', 'cyan', 'magenta']
+    
+    for i, accuracy_list in enumerate(accuracy_lists):
+        plt.plot(range(1, epochs + 1), accuracy_list, label=model_names[i], color=colors[i % len(colors)])
+        
     plt.xlabel("Epoch")
     plt.ylabel("Accuracy")
     plt.title("Test Accuracy")
