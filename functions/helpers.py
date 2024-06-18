@@ -37,6 +37,32 @@ def feature_distillation_loss(student_features, teacher_features):
     # Return the mean loss
     return loss #/ num_layers
 
+
+def feature_distillation_loss2(student_features, teacher_features):
+    """
+    Compute the feature distillation loss with knowledge distillation (KD) on specific layers.
+
+    Args:
+        student_features (list of torch.Tensor): List of feature tensors from the student model.
+        teacher_features (list of torch.Tensor): List of feature tensors from the teacher model.
+
+    Returns:
+        torch.Tensor: The computed feature distillation loss with KD.
+    """
+    loss = 0.0
+    
+    kd_indices = [0,-1,1]
+
+    for idx in kd_indices:
+        sf = student_features[idx]
+        tf = teacher_features[idx]
+
+        if sf.shape != tf.shape:
+            raise ValueError("The shapes of student and teacher feature maps must match.")
+        loss += F.mse_loss(sf, tf)
+
+    return loss / len(kd_indices['student'])  # Return the mean loss
+
 def knowledge_distillation_loss(student_logits, teacher_logits, temperature):
     """
     Compute the knowledge distillation loss using soft targets.
