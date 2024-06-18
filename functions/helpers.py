@@ -51,17 +51,18 @@ def feature_distillation_loss(student_features, teacher_features):
     """
     loss = 0.0
     
-    kd_indices = [0,-1,1]
+    kd_indices_student = [0,1,2]
+    kd_indices_teacher = [0,1,3]
 
-    for idx in kd_indices:
-        sf = student_features[idx]
-        tf = teacher_features[idx]
+    for idx_s,idx_t in zip(kd_indices_student,kd_indices_teacher):
+        sf = student_features[idx_s]
+        tf = teacher_features[idx_t]
 
         if sf.shape != tf.shape:
             raise ValueError("The shapes of student and teacher feature maps must match.")
         loss += F.mse_loss(sf, tf)
 
-    return loss / len(kd_indices['student'])  # Return the mean loss
+    return loss / len(kd_indices_student)  # Return the mean loss
 
 def knowledge_distillation_loss(student_logits, teacher_logits, temperature):
     """
