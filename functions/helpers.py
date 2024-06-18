@@ -8,37 +8,37 @@ import torch.nn.functional as F
 from torch import nn
 
 
+# def feature_distillation_loss(student_features, teacher_features):
+#     """
+#     Compute the feature distillation loss.
+    
+#     Args:
+#         student_features (list of torch.Tensor): List of feature tensors from the student model.
+#         teacher_features (list of torch.Tensor): List of feature tensors from the teacher model.
+    
+#     Returns:
+#         torch.Tensor: The computed feature distillation loss.
+#     """
+#     loss = 0.0
+#     num_layers = len(student_features)
+    
+#     for sf, tf in zip(student_features, teacher_features):
+        
+#         if sf.shape != tf.shape:
+#             raise ValueError("The shapes of student and teacher feature maps must match.")
+#         student_features = F.normalize(sf, p=2, dim=1)
+#         teacher_features = F.normalize(tf, p=2, dim=1)
+        
+#         # Compute MSE loss
+#         loss += F.mse_loss(student_features, teacher_features)
+    
+#     return loss
+    
+#     # Return the mean loss
+#     return loss #/ num_layers
+
+
 def feature_distillation_loss(student_features, teacher_features):
-    """
-    Compute the feature distillation loss.
-    
-    Args:
-        student_features (list of torch.Tensor): List of feature tensors from the student model.
-        teacher_features (list of torch.Tensor): List of feature tensors from the teacher model.
-    
-    Returns:
-        torch.Tensor: The computed feature distillation loss.
-    """
-    loss = 0.0
-    num_layers = len(student_features)
-    
-    for sf, tf in zip(student_features, teacher_features):
-        
-        if sf.shape != tf.shape:
-            raise ValueError("The shapes of student and teacher feature maps must match.")
-        student_features = F.normalize(sf, p=2, dim=1)
-        teacher_features = F.normalize(tf, p=2, dim=1)
-        
-        # Compute MSE loss
-        loss += F.mse_loss(student_features, teacher_features)
-    
-    return loss
-    
-    # Return the mean loss
-    return loss #/ num_layers
-
-
-def feature_distillation_loss2(student_features, teacher_features):
     """
     Compute the feature distillation loss with knowledge distillation (KD) on specific layers.
 
