@@ -67,15 +67,17 @@ class Transformer(nn.Module):
                 FeedForward(dim, mlp_dim, dropout = dropout)
             ]))
     def forward(self, x):
-        intermediate_feautres=[]
+        intermediate_features = {}
         attn_matrices = []
-        for attn, ff in self.layers:
-            x_attn,attn_matrix = attn(x)
-            x+=x_attn
-            x = ff(x) + x
+        
+        for layer_idx, (attn, ff) in enumerate(self.layers):
+            x_attn, attn_matrix = attn(x)
+            x = x + x_attn
+            x_ff = ff(x)
+            x = x + x_ff
+            
             attn_matrices.append(attn_matrix)
-            intermediate_feautres.append(x)
-        return x,attn_matrices,intermediate_feautres
+            intermediate_features[layer_idx] = x
 
 class ViT(nn.Module):
     def __init__(self, *, image_size, patch_size, num_classes, dim, depth, heads, mlp_dim, pool = 'cls', channels = 3, dim_head = 64, dropout = 0., emb_dropout = 0.,feature_distill=False):
